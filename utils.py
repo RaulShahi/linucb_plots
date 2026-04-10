@@ -18,8 +18,8 @@ mode_colors = {
         "mmrrs": "#f0f8ff",
         "minstrel": "#e6ffe6",
         "kernel-minstrel-ht": "#fff5e6",
-        "minstrel-ht-blues": "#ffe6f0",
-        "ucb_ra": "#e6e6ff",
+        "minstrel": "#ffe6f0",
+        "linucb": "#92d5d8",
     }
 
 atten_colors={    "40": "#2ecc71",  # Green (Safe)
@@ -126,8 +126,8 @@ def extract_mode_from_filename(filename):
     return parts[-1].split("-", 1)[1]
 def extract_attenuations(settings_path):
     """Extract attenuatioin from the settings.toml file to link them with the corresponding ap and sta parts"""
-    settings_file = os.path.join(settings_path, "settings.toml")
-    with open(settings_file, "r") as f:
+
+    with open(settings_path, "r") as f:
         config = toml.load(f)
 
     attenuation_values = []
@@ -181,7 +181,37 @@ def experiment_order_key(filepath: str) -> int:
     order_str = left.split("_")[-1]           # "3"
     return int(order_str)
 
+def load_or_process_measured_throughput(iteration_files_dict, cache_path):
+    if os.path.exists(cache_path):
+        print(f"Loading cached measured throughput from {cache_path}")
+        return pd.read_pickle(cache_path)
 
+    print("No measured throughput cache found. Processing raw files...")
+    return process_measured_throughput_files(
+        iteration_files_dict,
+        cache_path=cache_path,
+    )
+
+def load_or_process_trace_response(
+    iteration_files_dict,
+    attenuation_values,
+    averaged_cache_path,
+    first_iter_cache_path,
+):
+    if os.path.exists(averaged_cache_path) and os.path.exists(first_iter_cache_path):
+        print("Loading cached trace response data...")
+        return (
+            pd.read_pickle(averaged_cache_path),
+            pd.read_pickle(first_iter_cache_path),
+        )
+
+    print("No trace response cache found. Processing raw files...")
+    return process_trace_response_files(
+        iteration_files_dict,
+        attenuation_values,
+        averaged_cache_path=averaged_cache_path,
+        first_iter_cache_path=first_iter_cache_path,
+    )
 
 def categorize_files(directory):
     """
@@ -284,34 +314,28 @@ def read_csv_to_dict(file_path, delimiter):
     - The function also handles a "three-phase power model" by tracking and separating the power type from the power controller.
     """
     filtered_data = []
-    first_time = None
-
     current_power_type = 'not_from_power_controller'
+
     try:
         with open(file_path, "r") as file:
             csv_reader = csv.reader(file, delimiter=delimiter)
             for row in csv_reader:
                 if row[2] == "log":
                     current_power_type = row[-1]
+                    continue
 
                 if row[2] not in {"txs", "est_tp"}:
                     continue
-                if len(row[1]) == 16 :
+
+                if len(row[1]) == 16:
                     try:
                         actual_time = hex_to_time(row[1])
 
-                        if first_time is None:
-                            first_time = actual_time
-                        relative_time = (actual_time - first_time).total_seconds()
-
-                        if row[2] == "log":
-                            current_power_type = row[-1]
-
-                        elif  row[2] == "est_tp":
+                        if row[2] == "est_tp":
                             filtered_data.append({
-                                "trace_type" : row[2],
-                                "time": relative_time,
-                                "est_tp": int(row[4], 16)/10
+                                "trace_type": row[2],
+                                "actual_time": actual_time,
+                                "est_tp": int(row[4], 16) / 10
                             })
 
                         elif row[2] == "txs" and len(row) >= 11:
@@ -322,87 +346,28 @@ def read_csv_to_dict(file_path, delimiter):
                                         rate = split_values[0]
                                         power = int(split_values[-1], 16)
                                         filtered_data.append({
-                                                "trace_type" : row[2],
-                                                "time": relative_time,
-                                                "rate": rate,
-                                                "power": power,
-                                                "power_type": current_power_type
-
-                                            })
+                                            "trace_type": row[2],
+                                            "actual_time": actual_time,
+                                            "rate": rate,
+                                            "power": power,
+                                            "power_type": current_power_type,
+                                            "attempts" : int(row[4]),
+                                            "acks" : int(row[5]),
+                                        })
                                         break
                                     except ValueError:
                                         pass
+
                     except ValueError as e:
                         print(f"ValueError processing row {row}: {e}")
 
-
-
     except Exception as e:
         print(f"Error reading file {file_path}: {e}")
+
     return filtered_data
 
-def process_cpu_usage_data(cpu_usage_files_dict):
-    """
-    Processes CPU usage files, combines AP and STA data for all iterations,
-    and calculates CPU load.
 
-    Parameters:
-        cpu_usage_files_dict (dict): Dictionary where keys are iteration folder names
-                                     and values are lists of file paths for CPU usage files.
-
-    Returns:
-        tuple: Two pandas DataFrames, one for AP and one for STA, with calculated CPU load.
-    """
-
-    ap_combined_data = {}
-    sta_combined_data = {}
-
-    for iteration, files in cpu_usage_files_dict.items():
-        ap_file = next((f for f in files if "_cpu_ap" in f.lower()), None)
-        sta_file = next((f for f in files if "_cpu_sta" in f.lower()), None)
-
-        if ap_file:
-            ap_data = pd.read_csv(ap_file)
-            ap_combined_data[iteration] = calculate_cpu_load([ap_data])
-
-        if sta_file:
-            sta_data = pd.read_csv(sta_file)
-            sta_combined_data[iteration] = calculate_cpu_load([sta_data])
-
-    first_ap_data = ap_combined_data.get("1", pd.DataFrame())
-    first_sta_data = sta_combined_data.get("1", pd.DataFrame())
-
-    def average_data(first_data, combined_data):
-        averaged_data = []
-        for _, base_entry in first_data.iterrows():
-            base_elapsed = base_entry["elapsed"]
-            averaged_entry = {"elapsed": base_elapsed}
-            cpu_usage_values_to_average = [base_entry["cpu_load"]]
-            system_load_values_to_average = [base_entry["system"]] if "system" in base_entry else []
-
-            for iteration, data in combined_data.items():
-                if iteration == "1":
-                    continue
-                closest_row = data.iloc[(data["elapsed"] - base_elapsed).abs().argsort()[:1]]
-                if not closest_row.empty:
-                    cpu_usage_values_to_average.append(closest_row.iloc[0]["cpu_load"])
-                    system_load_values_to_average.append(closest_row.iloc[0]["system"])
-
-            if cpu_usage_values_to_average:
-                averaged_entry["cpu_load"] = sum(cpu_usage_values_to_average) / len(cpu_usage_values_to_average)
-
-            if system_load_values_to_average:
-                averaged_entry["system"] = sum(system_load_values_to_average)/len(system_load_values_to_average)
-
-            averaged_data.append(averaged_entry)
-        return pd.DataFrame(averaged_data)
-
-    averaged_ap_df = average_data(first_ap_data, ap_combined_data)
-    averaged_sta_df = average_data(first_sta_data, sta_combined_data)
-
-    return averaged_ap_df, averaged_sta_df
-
-def process_measured_throughput_files(iteration_files_dict):
+def process_measured_throughput_files(iteration_files_dict, cache_path=None):
     """
     Processes the measured throughput files for multiple iterations, averaging data based on the
     first iteration's timestamps.
@@ -434,7 +399,7 @@ def process_measured_throughput_files(iteration_files_dict):
             print(f"Processing throughput file: {file_path} for iteration: {iteration}")
             data = pd.read_csv(
                 file_path,
-                sep="\s+",
+                sep=r"\s+",
                 header=None,
                 skiprows=1,
                 names=["time", "throughput"],
@@ -446,7 +411,6 @@ def process_measured_throughput_files(iteration_files_dict):
     first_iteration_data = combined_data.get("1")
     if first_iteration_data is None:
         first_iteration_data = combined_data.get("01", pd.DataFrame())
-
 
     averaged_data = []
 
@@ -461,18 +425,18 @@ def process_measured_throughput_files(iteration_files_dict):
             if row_index < len(data):
                 values_to_average.append(data.iloc[row_index]["throughput"])
 
-        if values_to_average:
-            averaged_entry["throughput"] = sum(values_to_average) / len(
-                values_to_average
-            )
-
+        averaged_entry["throughput"] = sum(values_to_average) / len(values_to_average)
         averaged_data.append(averaged_entry)
-        averaged_df = pd.DataFrame(averaged_data)
+
+    averaged_df = pd.DataFrame(averaged_data)
+
+    if cache_path is not None:
+        averaged_df.to_pickle(cache_path)
 
     return averaged_df
 
 
-def process_trace_response_files(iteration_files_dict):
+def process_trace_response_files(iteration_files_dict, attenuation_values, averaged_cache_path=None, first_iter_cache_path=None):
     """
     Processes the response CSV files for multiple iterations, averaging data based on the first iteration's row indices.
 
@@ -508,39 +472,55 @@ def process_trace_response_files(iteration_files_dict):
 
     """
     combined_data = {}
+
     for iteration, trace_response_files in iteration_files_dict.items():
         trace_response_files.sort(key=experiment_order_key)
+        att_vals = [x for x in attenuation_values for _ in range(2)]
+
+        if len(att_vals) != len(trace_response_files):
+            print(attenuation_values)
+            print(len(attenuation_values), len(trace_response_files))
+            for file in trace_response_files:
+                print(file)
+            print("Lengths of attenuations and files do not match")
 
         iteration_data = []
-        current_time_offset = 0
-        for file_path in trace_response_files:
-            print(f"Processing response file: {file_path} for iteration: {iteration}")
+
+        for file_path, attenuation in zip(trace_response_files, att_vals):
+            print(f"Processing response file: {file_path} for iteration: {iteration} at attenuation {attenuation}")
             mode = extract_mode_from_filename(file_path)
-            data  = read_csv_to_dict(file_path, delimiter=";")
+            data = read_csv_to_dict(file_path, delimiter=";")
+
             if not data:
                 continue
 
             for entry in data:
-                entry["time"] += current_time_offset
                 entry["mode"] = mode
+                entry["attenuation"] = attenuation
                 iteration_data.append(entry)
 
-            current_time_offset = iteration_data[-1]["time"] + 1
+        if not iteration_data:
+            combined_data[iteration] = []
+            continue
+
+        iteration_data.sort(key=lambda x: x["actual_time"])
+        base_time = iteration_data[0]["actual_time"]
+
+        for entry in iteration_data:
+            entry["time"] = (entry["actual_time"] - base_time).total_seconds()
 
         combined_data[iteration] = iteration_data
 
-
     first_iteration_data = combined_data.get("1") or combined_data.get("01") or []
-
     averaged_data = []
 
     for row_index in range(len(first_iteration_data)):
         base_entry = first_iteration_data[row_index]
-
-        averaged_entry = {"time": base_entry["time"], "mode": base_entry["mode"], "trace_type":base_entry["trace_type"], "est_tp": base_entry.get("est_tp", None)}
+        averaged_entry = base_entry.copy()
 
         if "power_type" in base_entry:
             averaged_entry["power_type"] = base_entry["power_type"]
+
         values_to_average = [base_entry]
 
         for iteration, data in combined_data.items():
@@ -548,23 +528,36 @@ def process_trace_response_files(iteration_files_dict):
                 continue
             if row_index < len(data):
                 current_entry = data[row_index]
+
                 if current_entry["trace_type"] == "txs":
-                    if (current_entry["mode"] == base_entry["mode"] and  ("power_type" not in current_entry or current_entry["power_type"] == base_entry.get("power_type"))):
+                    if (
+                        current_entry["mode"] == base_entry["mode"]
+                        and (
+                            "power_type" not in current_entry
+                            or current_entry["power_type"] == base_entry.get("power_type")
+                        )
+                    ):
                         values_to_average.append(current_entry)
+
                 elif current_entry["trace_type"] == "est_tp":
                     values_to_average.append(current_entry)
 
-
-        power_values = [
-        value["power"] for value in values_to_average if "power" in value
-    ]
+        power_values = [value["power"] for value in values_to_average if "power" in value]
         if power_values:
             averaged_entry["power"] = sum(power_values) // len(power_values)
 
         averaged_data.append(averaged_entry)
 
-    return averaged_data, combined_data
+    averaged_df = pd.DataFrame(averaged_data)
+    first_iteration_df = pd.DataFrame(first_iteration_data)
 
+    if averaged_cache_path is not None:
+        averaged_df.to_pickle(averaged_cache_path)
+
+    if first_iter_cache_path is not None:
+        first_iteration_df.to_pickle(first_iter_cache_path)
+
+    return averaged_df, first_iteration_df
 
 def get_boxplot_properties():
     """
@@ -638,7 +631,7 @@ def bin_time(df, time_column="time", bin_size=10):
     return df
 
 
-def get_bin_edges(min_time, max_time, bin_size):
+def get_bin_edges(min_time, max_time, bin_size=10):
     """
     Generates bin edges for a time range with a specified bin size.
 
@@ -687,20 +680,20 @@ def add_grid_lines_to_separate_modes(ax, df):
     df_sorted = df.sort_values(by="time", ascending=True)
     prev_mode = None
     prev_time = None
+    prev_attenuation = None
     line_positions = []
     modes_between_lines = []
     for idx, row in df_sorted.iterrows():
         current_mode = row["mode"]
         current_time = row["time"]
+        current_attenuation = row["attenuation"]
 
         if current_mode != prev_mode:
-            if prev_mode is not None and prev_time is not None:
+            if prev_mode is not None and prev_time is not None and prev_attenuation is not None:
                 line_positions.append(prev_time)
-                if prev_mode == "hybrid_linucb_ra":
-                    modes_between_lines.append("ucb_ra")
-                else:
-                    modes_between_lines.append(prev_mode)
+                modes_between_lines.append((prev_mode, prev_attenuation))
             prev_mode = current_mode
+            prev_attenuation = current_attenuation
         prev_time = current_time
 
     first_time = df_sorted["time"].iloc[0]
@@ -708,7 +701,7 @@ def add_grid_lines_to_separate_modes(ax, df):
 
     line_positions.insert(0, first_time)
     line_positions.append(last_time)
-    modes_between_lines.append(df_sorted["mode"].iloc[-1])
+    modes_between_lines.append((df_sorted["mode"].iloc[-1], df_sorted["attenuation"].iloc[-1]))
 
     rounded_positions = [round(pos) for pos in line_positions]
     for pos in sorted(set(line_positions)):
@@ -810,17 +803,24 @@ def plot_rate_vs_time(kwargs):
 
     for i in range(len(rounded_positions) - 1):
         start, end = rounded_positions[i], rounded_positions[i + 1]
-        mode = modes_between_lines[i]
+        mode, attenuation = modes_between_lines[i]
         color = mode_colors.get(mode, "#f0f0f0")
         ax.axvspan(start, end, color=color, alpha=0.3)
         ax.text(
-            (start + end) / 2, df["rate"].min(), mode,
-            ha="center", va="top", fontsize=40, fontweight="bold",
+            #(start + end) / 2, df["rate"].min(), mode,
+            (start + end) / 2, 50, f"{mode}",
+            ha="center", va="top", fontsize=18, fontweight="bold",
             bbox=dict(facecolor="white", alpha=0.6, edgecolor="none")
         )
-    #ax.set_xticks(rounded_positions)
-    #ax.set_xticklabels([f"{int(pos)}" for pos in rounded_positions])
-    ax.xaxis.set_major_locator(MultipleLocator(5))
+        ax.text(
+            #(start + end) / 2, df["rate"].min(), mode,
+            (start + end) / 2, 0, f"{attenuation}dB",
+            ha="center", va="top", fontsize=18, fontweight="bold",
+            bbox=dict(facecolor="white", alpha=0.6, edgecolor="none")
+        )
+    ax.set_xticks(rounded_positions)
+    ax.set_xticklabels([f"{int(pos)}" for pos in rounded_positions])
+    #ax.xaxis.set_major_locator(MultipleLocator(5))
     ax.legend(loc="lower left")
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Rate")
@@ -1022,15 +1022,23 @@ def plot_throughput_vs_time(kwargs):
 
     for i in range(len(rounded_positions) - 1):
         start, end = rounded_positions[i], rounded_positions[i + 1]
-        mode = modes_between_lines[i]
+        mode, attenuation = modes_between_lines[i]
         color = mode_colors.get(mode, "#f0f0f0")
         ax.axvspan(start, end, color=color, alpha=0.3)
         ax.text(
-            (start + end) / 2, df["throughput"].min(), mode,
-            ha="center", va="top", fontsize=20, fontweight="bold",
+            (start + end) / 2, 50, f"{mode}",
+            ha="center", va="top", fontsize=16, fontweight="bold",
+            bbox=dict(facecolor="white", alpha=0.6, edgecolor="none")
+        )
+        ax.text(
+            (start + end) / 2,30,f"{attenuation}dB",
+            ha="center",va="top",fontsize=16, fontweight="bold",
             bbox=dict(facecolor="white", alpha=0.6, edgecolor="none")
         )
 
+    ax.set_xlim(left=0)
+    ax.set_xticks(rounded_positions)
+    ax.set_xticklabels([f"{int(x)}" for x in rounded_positions], rotation=45)
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Throughput")
     ax.set_title("Throughput vs Time")
@@ -1044,38 +1052,184 @@ def plot_estimated_throughput(kwargs):
     df = kwargs["df"]
     ax = kwargs["ax"]
 
-
     rounded_positions = kwargs["rounded_position"]
     modes_between_lines = kwargs["modes_between_lines"]
-
-    bin_size = kwargs.get("bin_size", 1.0)
 
     df = df.sort_values("time")
     ax.plot(df["time"], df["est_tp"], linewidth=1)
 
     for i in range(len(rounded_positions) - 1):
         start, end = rounded_positions[i], rounded_positions[i + 1]
-        mode = modes_between_lines[i]
+        mode, attenuation = modes_between_lines[i]
         color = mode_colors.get(mode, "#f0f0f0")
+
         ax.axvspan(start, end, color=color, alpha=0.3)
         ax.text(
-            (start + end) / 2, 2, mode,
-            ha="center", va="top", fontsize=20, fontweight="bold",
+            (start + end) / 2, 50, f"{mode}",
+            ha="center", va="top", fontsize=16, fontweight="bold",
             bbox=dict(facecolor="white", alpha=0.6, edgecolor="none")
-    )
-
+        )
+        ax.text(
+            (start + end) / 2, 0, f"{attenuation}dB",
+            ha="center", va="top", fontsize=16, fontweight="bold",
+            bbox=dict(facecolor="white", alpha=0.6, edgecolor="none")
+        )
 
     ax.set_xlim(left=0)
+    ax.set_xticks(rounded_positions)
+    ax.set_xticklabels([f"{int(x)}" for x in rounded_positions], rotation=45)
+
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Estimated Throughput")
     ax.set_title("Estimated Throughput vs Time")
 
+def plot_throughput_vs_time_box_plot(kwargs):
+    """
+    Plots a boxplot of throughput over time using fixed time bins.
 
+    Parameters
+    ----------
+    kwargs : dict
+        - df : pandas.DataFrame with columns ["time", "throughput"]
+        - ax : matplotlib.axes.Axes
+        - bin_edges : list of float
+        - rounded_position : list of float
+        - modes_between_lines : list
+        - rate_x_limit : list or tuple
+        - bin_size : int or float
+    """
+    df = kwargs["df"]
+    ax = kwargs["ax"]
+    bin_edges = kwargs["bin_edges"]
+    rate_line_positions = kwargs["rounded_position"]
+    modes_between_lines = kwargs["modes_between_lines"]
+    rate_x_limit = kwargs["rate_x_limit"]
+    bin_size = kwargs["bin_size"]
 
+    df = df.sort_values("time").copy()
+    df = bin_time(df, time_column="time", bin_size=bin_size)
+    bins = df["binned_time"].cat.categories
 
+    for bin_idx in range(len(bin_edges) - 1):
+        bin_data = df[
+            (df["time"] >= bin_edges[bin_idx]) &
+            (df["time"] < bin_edges[bin_idx + 1])
+        ]
 
+        if not bin_data.empty:
+            sns.boxplot(
+                data=bin_data,
+                x=[bin_idx] * len(bin_data),
+                y="throughput",
+                ax=ax,
+                boxprops=dict(facecolor="lightblue", edgecolor="blue"),
+                medianprops=dict(color="blue"),
+                whiskerprops=dict(color="blue"),
+                capprops=dict(color="blue"),
+                flierprops=dict(
+                    marker="o",
+                    markerfacecolor="blue",
+                    markeredgecolor="blue"
+                )
+            )
 
+    scaled_positions = scale_line_positions(
+        rate_line_positions, rate_x_limit[1], len(bins)
+    )
 
+    for i in range(len(scaled_positions) - 1):
+        start, end = scaled_positions[i], scaled_positions[i + 1]
+        mode, attenuation = modes_between_lines[i]
+        color = mode_colors.get(mode, "#f0f0f0")
 
+        ax.axvspan(start, end, color=color, alpha=0.3)
 
+        ax.text(
+            (start + end) / 2,
+            30,
+            f"{mode}",
+            ha="center",
+            va="top",
+            fontsize=18,
+            fontweight="bold",
+            bbox=dict(facecolor="white", alpha=0.6, edgecolor="none")
+        )
 
+        ax.text(
+            (start + end) / 2,
+            0,
+            f"{attenuation} dB",
+            ha="center",
+            va="top",
+            fontsize=18,
+            fontweight="bold",
+            bbox=dict(facecolor="white", alpha=0.6, edgecolor="none")
+        )
+
+    for pos in scaled_positions:
+        ax.axvline(x=pos, color="black", linestyle="--", linewidth=1)
+
+    tick_positions = scaled_positions
+    tick_labels = [f"{int(pos)}" for pos in rate_line_positions]
+
+    ax.set_xticks(tick_positions)
+    ax.set_xticklabels(tick_labels, rotation=45)
+
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("Throughput")
+    ax.set_title(f"Throughput vs Time (Boxplot, bin={bin_size}s)")
+    ax.set_xlim(0, len(bins))
+
+def rate_selection_count_plot(kwargs):
+    df = kwargs["df"]
+    ax = kwargs["ax"]
+    mode = kwargs["mode"]
+    attenuation = kwargs["attenuation"]
+
+    filtered_df = df[
+        (df["attenuation"] == attenuation) &
+        (df["mode"] == mode)
+    ].copy()
+
+    if filtered_df.empty:
+        ax.set_title(f"No data for mode={mode}, attenuation={attenuation}")
+        ax.set_xlabel("Rate")
+        ax.set_ylabel("Selection Count")
+        return
+
+    summary = (
+        filtered_df.groupby("rate", as_index=False)
+        .agg(
+            selection_count=("rate", "size"),
+            total_acks=("acks", "sum"),
+            total_attempts=("attempts", "sum"),
+        )
+        .sort_values("rate")
+    )
+
+    summary["success_ratio"] = (
+        summary["total_acks"] / summary["total_attempts"]
+    ).fillna(0)
+
+    # Bar plot for selection count
+    x = range(len(summary))
+    ax.bar(x, summary["selection_count"], width=0.6)
+    ax.set_xticks(x)
+    ax.set_xticklabels(summary["rate"], rotation=45)
+    ax.set_xlabel("Rate")
+    ax.set_ylabel("Selection Count")
+    ax.set_title(f"Rate Selection Count and Success Ratio ({mode}, att={attenuation})")
+
+    # Second y-axis for success ratio
+    ax2 = ax.twinx()
+    ax2.plot(
+        x,
+        summary["success_ratio"],
+        marker="o",
+        linewidth=3,
+        linestyle="--"
+)
+    ax2.set_ylabel("Success Ratio")
+
+    # Optional: keep success ratio axis bounded
+    ax2.set_ylim(0, 1.05)

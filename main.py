@@ -1,16 +1,20 @@
+import os
+import pandas as pd
 import argparse
+import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 from matplotlib import gridspec
 from utils import *
 
 plt.rcParams.update({
-    "font.size": 28,
-    "axes.titlesize": 28,
-    "axes.labelsize": 28,
-    "xtick.labelsize": 28,
-    "ytick.labelsize": 28,
-    "legend.fontsize": 28,
+    "font.family": "DejaVu Sans",
+    "font.size": 20,
+    "axes.titlesize": 22,
+    "axes.labelsize": 20,
+    "xtick.labelsize": 20,
+    "ytick.labelsize": 20,
+    "legend.fontsize": 20,
 })
 
 
@@ -29,18 +33,14 @@ def plot_response_files(kwargs):
     """
     trace_response_data = kwargs["trace_response_data"]
     measured_throughput_data = kwargs["measured_throughput_data"]
-    combined_data = kwargs["combined_data"]
+    first_iteration_data = kwargs["first_iteration_data"]
 
 
-    df = pd.DataFrame(trace_response_data)
+    df = trace_response_data
     pd.set_option("display.max_rows", None)
 
-
     df_txs = df[df["trace_type"] == "txs"]
-
-
     df_est_tp = df[df["trace_type"] == "est_tp"]
-    #print("est_tp",df_est_tp)
     min_time = df["time"].min()
     max_time = df["time"].max()
 
@@ -52,9 +52,9 @@ def plot_response_files(kwargs):
     # Dynamically compute figure width and dpi
     #desired_fig_width = time_range * width_factor
     #fig_width = min(desired_fig_width, 50)
-    fig_width = 100
+    fig_width = 50
     #dpi = min(300, max_pixel_width / fig_width)
-    dpi = 300
+    dpi = 200
 
     pixel_width = fig_width * dpi
     print(f"[INFO] time_range: {time_range:.2f}, fig_width: {fig_width:.2f}, dpi: {dpi:.2f}, pixel_width: {pixel_width:.2f}")
@@ -63,7 +63,6 @@ def plot_response_files(kwargs):
     num_subplots = 2
     total_height = base_height * num_subplots
 
-    first_key, first_data = next(iter(combined_data.items()))
 
     fig1 = plt.figure(figsize=(fig_width, total_height))
     fig1.set_size_inches(fig_width, total_height)
@@ -71,13 +70,12 @@ def plot_response_files(kwargs):
 
     ax1 = fig1.add_subplot(111)
 
-
     rounded_positions, modes_between_lines = add_grid_lines_to_separate_modes(ax1, df)
     bin_edges = get_bin_edges(min_time, max_time, bin_size)
 
     rate_x_limit = plot_rate_vs_time(
         {
-            "df": pd.DataFrame(first_data),
+            "df": first_iteration_data,
             "ax": ax1,
             "rounded_position": rounded_positions,
             "modes_between_lines": modes_between_lines,
@@ -90,13 +88,13 @@ def plot_response_files(kwargs):
 
 
     fig1.tight_layout(pad=0.6)
-    fig1.savefig("linucb_v2_ra_vs_minstrel_rate_plot.jpg", dpi=dpi, facecolor="white")
+    fig1.savefig("linucb_v2_ra_vs_minstrel_rate_plot1.png", dpi=dpi, bbox_inches="tight",facecolor="white")
     plt.close(fig1)
 
     fig2 = plt.figure(figsize=(fig_width, total_height))
     fig2.set_size_inches(fig_width, total_height)
 
-    gs = gridspec.GridSpec(num_subplots, 1, height_ratios=[3, 3])
+    gs = gridspec.GridSpec(num_subplots, 1, height_ratios=[5, 5])
     ax3 = fig2.add_subplot(gs[0])
     plot_throughput_vs_time(
         {
@@ -117,11 +115,51 @@ def plot_response_files(kwargs):
         }
     )
 
-    ax3.tick_params(labelbottom=False)
-    ax3.set_xlim(left=0, right=tmax)
-    ax3.margins(x=0)
-    fig2.savefig("linucb_v2_tp_plot.png",dpi=dpi, facecolor="white")
+
+    # for ax in (ax3, ax4):
+    #     ax.set_xlim(left=tmin, right=tmax)
+    #     ax.margins(x=0)
+    #     ax.set_xticks(np.arange(tmin, tmax + 1, 20))
+
+    fig2.savefig("linucb_v2_tp_plot1.png",dpi=dpi, bbox_inches="tight", facecolor="white")
     plt.close(fig2)
+
+    fig3 = plt.figure(figsize=(fig_width, total_height))
+    fig3.set_size_inches(fig_width, total_height)
+
+    gs1 = gridspec.GridSpec(num_subplots, 1, height_ratios=[5,5])
+    ax5 = fig3.add_subplot(gs1[0])
+    plot_throughput_vs_time_box_plot({
+            "df": measured_throughput_data,
+            "ax": ax5,
+            "rounded_position": rounded_positions,
+            "modes_between_lines": modes_between_lines,
+            "bin_edges": bin_edges,
+            "rate_x_limit": rate_x_limit,
+            "bin_size": bin_size,
+    })
+
+
+    fig3.savefig("linucb_v2_tp_boxplot.png",dpi=dpi, bbox_inches="tight", facecolor="white")
+    # plt.close(fig3)
+
+    # fig4 = plt.figure(figsize=(fig_width, total_height))
+    # fig4.set_size_inches(fig_width, total_height)
+
+    # ax6 = fig4.add_subplot(111)
+
+    # rate_selection_count_plot({
+    #     "ax":ax6,
+    #     "df": df_txs,
+    #     "attenuation": 70,
+    #     "mode": "linucb"
+    # })
+
+    # fig4.savefig("Rate_selection_count_at_70db.png", dpi=dpi,bbox_inches="tight", facecolor="white")
+    # plt.close(fig4)
+
+
+
 
 
 if __name__ == "__main__":
@@ -138,20 +176,42 @@ if __name__ == "__main__":
         expected_throughput_files_dict,
         trace_response_files_dict,
         cpu_usage_files_dict,
-    ) = categorize_files(args.directory)
+    ) = categorize_files(f"{args.directory}/measurement_data")
+
+    settings_path = f"{args.directory}/settings.toml"
 
 
-    #ap_cpu_usage, sta_cpu_usage = process_cpu_usage_data(cpu_usage_files_dict)
-    measured_throughput_data = process_measured_throughput_files(
-        measured_throughput_file_dict
+    attenuation_values = extract_attenuations(settings_path)
+     # Cache directory inside the experiment directory
+    cache_dir = os.path.join(args.directory, "cache")
+    os.makedirs(cache_dir, exist_ok=True)
+
+    measured_throughput_cache = os.path.join(
+        cache_dir, "cached_measured_throughput.pkl"
     )
-    trace_response_data, combined_data = process_trace_response_files(trace_response_files_dict)
+    trace_response_avg_cache = os.path.join(
+        cache_dir, "cached_trace_response_averaged.pkl"
+    )
+    trace_response_first_iter_cache = os.path.join(
+        cache_dir, "cached_trace_response_first_iteration.pkl"
+    )
+
+    measured_throughput_data = load_or_process_measured_throughput(
+        measured_throughput_file_dict,
+        cache_path=measured_throughput_cache,
+    )
+
+    trace_response_data, first_iteration_data = load_or_process_trace_response(
+        trace_response_files_dict,
+        attenuation_values,
+        averaged_cache_path=trace_response_avg_cache,
+        first_iter_cache_path=trace_response_first_iter_cache,
+    )
+
     plot_response_files(
         {
             "trace_response_data": trace_response_data,
             "measured_throughput_data": measured_throughput_data,
-            #"ap_cpu_usage": ap_cpu_usage,
-            #"sta_cpu_usage": sta_cpu_usage,
-            "combined_data" : combined_data
+            "first_iteration_data": first_iteration_data,
         }
     )
