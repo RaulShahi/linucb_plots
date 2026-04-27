@@ -7,6 +7,7 @@ import numpy as np
 import toml
 import glob
 from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
 import matplotlib.pyplot as plt
 from matplotlib import gridspec
 from matplotlib.colors import to_rgba
@@ -16,8 +17,7 @@ from matplotlib.ticker import MultipleLocator
 
 mode_colors = {
         "mmrrs": "#f0f8ff",
-        "minstrel": "#e6ffe6",
-        "kernel-minstrel-ht": "#fff5e6",
+        "kernel_minstrel": "#fff5e6",
         "minstrel": "#ffe6f0",
         "linucb": "#92d5d8",
     }
@@ -761,6 +761,22 @@ def scale_line_positions(line_positions, rate_x_range, power_x_range):
     return [pos * scaling_factor for pos in line_positions]
 
 
+def add_mode_legend(ax=None, fig=None, mode_colors = mode_colors, modes_between_lines = None, location = "upper right"):
+    unique_modes = []
+    for mode, _ in modes_between_lines:
+        if mode not in unique_modes:
+            unique_modes.append(mode)
+
+    handles = [
+        Patch(facecolor = mode_colors.get(mode, "'f0f0f0"), edgecolor="black", alpha=0.3, label = mode)
+        for mode in unique_modes
+    ]
+
+    if ax is not None:
+        ax.legend(handles = handles, title="Mode", loc=location)
+    elif fig is not None:
+        fig.legend(handles=handles, title = "Mode", loc = "upper center", ncol= len(unique_modes))
+
 def plot_rate_vs_time(kwargs):
     """
     Plots rate versus time, with separate colors for different modes.
@@ -807,26 +823,21 @@ def plot_rate_vs_time(kwargs):
         color = mode_colors.get(mode, "#f0f0f0")
         ax.axvspan(start, end, color=color, alpha=0.3)
         ax.text(
-            #(start + end) / 2, df["rate"].min(), mode,
-            (start + end) / 2, 50, f"{mode}",
-            ha="center", va="top", fontsize=18, fontweight="bold",
-            bbox=dict(facecolor="white", alpha=0.6, edgecolor="none")
-        )
-        ax.text(
-            #(start + end) / 2, df["rate"].min(), mode,
-            (start + end) / 2, 0, f"{attenuation}dB",
+            (start + end) / 2, 50, f"{attenuation}dB",
             ha="center", va="top", fontsize=18, fontweight="bold",
             bbox=dict(facecolor="white", alpha=0.6, edgecolor="none")
         )
     ax.set_xticks(rounded_positions)
     ax.set_xticklabels([f"{int(pos)}" for pos in rounded_positions])
     #ax.xaxis.set_major_locator(MultipleLocator(5))
-    ax.legend(loc="lower left")
+    #ax.legend(loc="lower left")
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Rate")
     ax.set_title("Rate vs Time")
     ax.set_xlim(df["time"].min(), df["time"].max())
     ax.invert_yaxis()
+
+    add_mode_legend(ax=ax, mode_colors=mode_colors, modes_between_lines=modes_between_lines, location="lower left")
 
     return ax.get_xlim()
 
@@ -1020,18 +1031,16 @@ def plot_throughput_vs_time(kwargs):
     rounded_positions = kwargs["rounded_position"]
     modes_between_lines = kwargs["modes_between_lines"]
 
+    ymin, ymax = ax.get_ylim()
+    y_pos = (ymin + ymax) / 2
+
     for i in range(len(rounded_positions) - 1):
         start, end = rounded_positions[i], rounded_positions[i + 1]
         mode, attenuation = modes_between_lines[i]
         color = mode_colors.get(mode, "#f0f0f0")
         ax.axvspan(start, end, color=color, alpha=0.3)
         ax.text(
-            (start + end) / 2, 50, f"{mode}",
-            ha="center", va="top", fontsize=16, fontweight="bold",
-            bbox=dict(facecolor="white", alpha=0.6, edgecolor="none")
-        )
-        ax.text(
-            (start + end) / 2,30,f"{attenuation}dB",
+            (start + end) / 2,y_pos,f"{attenuation}dB",
             ha="center",va="top",fontsize=16, fontweight="bold",
             bbox=dict(facecolor="white", alpha=0.6, edgecolor="none")
         )
@@ -1058,6 +1067,9 @@ def plot_estimated_throughput(kwargs):
     df = df.sort_values("time")
     ax.plot(df["time"], df["est_tp"], linewidth=1)
 
+    ymin, ymax = ax.get_ylim()
+    y_pos = (ymin + ymax) / 2
+
     for i in range(len(rounded_positions) - 1):
         start, end = rounded_positions[i], rounded_positions[i + 1]
         mode, attenuation = modes_between_lines[i]
@@ -1065,12 +1077,7 @@ def plot_estimated_throughput(kwargs):
 
         ax.axvspan(start, end, color=color, alpha=0.3)
         ax.text(
-            (start + end) / 2, 50, f"{mode}",
-            ha="center", va="top", fontsize=16, fontweight="bold",
-            bbox=dict(facecolor="white", alpha=0.6, edgecolor="none")
-        )
-        ax.text(
-            (start + end) / 2, 0, f"{attenuation}dB",
+            (start + end) / 2, y_pos, f"{attenuation}dB",
             ha="center", va="top", fontsize=16, fontweight="bold",
             bbox=dict(facecolor="white", alpha=0.6, edgecolor="none")
         )
@@ -1211,6 +1218,7 @@ def rate_selection_count_plot(kwargs):
         summary["total_acks"] / summary["total_attempts"]
     ).fillna(0)
 
+    summary = summary.sort_values("selection_count", ascending=False).head(20)
     # Bar plot for selection count
     x = range(len(summary))
     ax.bar(x, summary["selection_count"], width=0.6)
@@ -1230,6 +1238,4 @@ def rate_selection_count_plot(kwargs):
         linestyle="--"
 )
     ax2.set_ylabel("Success Ratio")
-
-    # Optional: keep success ratio axis bounded
     ax2.set_ylim(0, 1.05)

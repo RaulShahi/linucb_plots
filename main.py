@@ -65,8 +65,7 @@ def plot_response_files(kwargs):
 
 
     fig1 = plt.figure(figsize=(fig_width, total_height))
-    fig1.set_size_inches(fig_width, total_height)
-    gs = gridspec.GridSpec(num_subplots, 1, height_ratios=[4, 1])
+    fig1.set_size_inches(fig_width, 50)
 
     ax1 = fig1.add_subplot(111)
 
@@ -88,7 +87,7 @@ def plot_response_files(kwargs):
 
 
     fig1.tight_layout(pad=0.6)
-    fig1.savefig("linucb_v2_ra_vs_minstrel_rate_plot1.png", dpi=dpi, bbox_inches="tight",facecolor="white")
+    fig1.savefig("v2.7_vs_kmht_random_flucutations_rate_plot.png", dpi=dpi, bbox_inches="tight",facecolor="white")
     plt.close(fig1)
 
     fig2 = plt.figure(figsize=(fig_width, total_height))
@@ -115,32 +114,32 @@ def plot_response_files(kwargs):
         }
     )
 
+    add_mode_legend(
+        fig=fig2,
+        mode_colors=mode_colors,
+        modes_between_lines=modes_between_lines
+    )
 
-    # for ax in (ax3, ax4):
-    #     ax.set_xlim(left=tmin, right=tmax)
-    #     ax.margins(x=0)
-    #     ax.set_xticks(np.arange(tmin, tmax + 1, 20))
-
-    fig2.savefig("linucb_v2_tp_plot1.png",dpi=dpi, bbox_inches="tight", facecolor="white")
+    fig2.savefig("v2.7_vs_kmht_random_fluctuations_tp_plot.png",dpi=dpi, bbox_inches="tight", facecolor="white")
     plt.close(fig2)
 
     fig3 = plt.figure(figsize=(fig_width, total_height))
     fig3.set_size_inches(fig_width, total_height)
 
-    gs1 = gridspec.GridSpec(num_subplots, 1, height_ratios=[5,5])
-    ax5 = fig3.add_subplot(gs1[0])
-    plot_throughput_vs_time_box_plot({
-            "df": measured_throughput_data,
-            "ax": ax5,
-            "rounded_position": rounded_positions,
-            "modes_between_lines": modes_between_lines,
-            "bin_edges": bin_edges,
-            "rate_x_limit": rate_x_limit,
-            "bin_size": bin_size,
-    })
+    # gs1 = gridspec.GridSpec(num_subplots, 1, height_ratios=[5,5])
+    # ax5 = fig3.add_subplot(gs1[0])
+    # plot_throughput_vs_time_box_plot({
+    #         "df": measured_throughput_data,
+    #         "ax": ax5,
+    #         "rounded_position": rounded_positions,
+    #         "modes_between_lines": modes_between_lines,
+    #         "bin_edges": bin_edges,
+    #         "rate_x_limit": rate_x_limit,
+    #         "bin_size": bin_size,
+    # })
 
 
-    fig3.savefig("linucb_v2_tp_boxplot.png",dpi=dpi, bbox_inches="tight", facecolor="white")
+    # fig3.savefig("linucb_v2_tp_boxplot.png",dpi=dpi, bbox_inches="tight", facecolor="white")
     # plt.close(fig3)
 
     # fig4 = plt.figure(figsize=(fig_width, total_height))
@@ -155,7 +154,7 @@ def plot_response_files(kwargs):
     #     "mode": "linucb"
     # })
 
-    # fig4.savefig("Rate_selection_count_at_70db.png", dpi=dpi,bbox_inches="tight", facecolor="white")
+    # fig4.savefig("V2.5_linucb_vs_kmht_rate_count.png", dpi=dpi,bbox_inches="tight", facecolor="white")
     # plt.close(fig4)
 
 
