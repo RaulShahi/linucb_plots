@@ -828,11 +828,11 @@ def plot_rate_vs_time(kwargs):
             bbox=dict(facecolor="white", alpha=0.6, edgecolor="none")
         )
     ax.set_xticks(rounded_positions)
-    ax.set_xticklabels([f"{int(pos)}" for pos in rounded_positions])
+    ax.set_xticklabels([f"{int(pos)}" for pos in rounded_positions],rotation=45)
     #ax.xaxis.set_major_locator(MultipleLocator(5))
     #ax.legend(loc="lower left")
     ax.set_xlabel("Time (s)")
-    ax.set_ylabel("Rate")
+    ax.set_ylabel("Rate (MCS)")
     ax.set_title("Rate vs Time")
     ax.set_xlim(df["time"].min(), df["time"].max())
     ax.invert_yaxis()
@@ -1028,6 +1028,7 @@ def plot_throughput_vs_time(kwargs):
     df = df.sort_values("time")
 
     ax.plot(df["time"], df["throughput"], linewidth=1)
+
     rounded_positions = kwargs["rounded_position"]
     modes_between_lines = kwargs["modes_between_lines"]
 
@@ -1041,7 +1042,7 @@ def plot_throughput_vs_time(kwargs):
         ax.axvspan(start, end, color=color, alpha=0.3)
         ax.text(
             (start + end) / 2,y_pos,f"{attenuation}dB",
-            ha="center",va="top",fontsize=16, fontweight="bold",
+            ha="center",va="top",fontsize=14, fontweight="bold",
             bbox=dict(facecolor="white", alpha=0.6, edgecolor="none")
         )
 
@@ -1049,7 +1050,7 @@ def plot_throughput_vs_time(kwargs):
     ax.set_xticks(rounded_positions)
     ax.set_xticklabels([f"{int(x)}" for x in rounded_positions], rotation=45)
     ax.set_xlabel("Time (s)")
-    ax.set_ylabel("Throughput")
+    ax.set_ylabel("Throughput (Mbps)")
     ax.set_title("Throughput vs Time")
 
 
@@ -1239,3 +1240,103 @@ def rate_selection_count_plot(kwargs):
 )
     ax2.set_ylabel("Success Ratio")
     ax2.set_ylim(0, 1.05)
+
+
+def plot_throughput_summary_by_segment(kwargs):
+    df = kwargs["df"].sort_values("time")
+    ax = kwargs["ax"]
+
+    rounded_positions = kwargs["rounded_position"]
+    modes_between_lines = kwargs["modes_between_lines"]
+
+    ymin, ymax = ax.get_ylim()
+    y_pos = (ymin + ymax) / 2
+
+    mean_labeled = False
+    median_labeled = False
+    std_labeled = False
+
+
+    for i in range(len(rounded_positions) - 1):
+        start, end = rounded_positions[i], rounded_positions[i + 1]
+        mode, attenuation = modes_between_lines[i]
+
+        color = mode_colors.get(mode, "#f0f0f0")
+        ax.axvspan(start, end, color=color, alpha=0.3)
+
+        settling_time = 3.0
+
+        segment_df = df[(df["time"] >= start + settling_time) & (df["time"] <= end)].copy()
+
+        if mode == "mmrrs" or segment_df.empty:
+            continue
+
+        mean_tp = segment_df["throughput"].mean()
+        median_tp = segment_df["throughput"].median()
+        std_tp = segment_df["throughput"].std()
+
+        ax.hlines(
+            mean_tp,
+            xmin=start,
+            xmax=end,
+            color="blue",
+            linestyles="--",
+            linewidth=3,
+            label="Mean" if not mean_labeled else None,
+        )
+        mean_labeled = True
+
+        ax.hlines(
+            median_tp,
+            xmin=start,
+            xmax=end,
+            color="green",
+            linestyles="-",
+            linewidth=3,
+            label="Median" if not median_labeled else None,
+        )
+        median_labeled = True
+
+        ax.fill_between(
+        [start, end],
+        mean_tp - std_tp,
+        mean_tp + std_tp,
+        color="blue",
+        alpha=0.15,
+        label = "Mean ± SD" if not std_labeled else None
+        )
+        std_labeled = True
+
+    ymin, ymax = ax.get_ylim()
+    y_pos = (ymin + ymax) / 2.25
+
+    for i in range(len(rounded_positions) - 1):
+        start, end = rounded_positions[i], rounded_positions[i + 1]
+        _, attenuation = modes_between_lines[i]
+
+        ax.text(
+            (start + end) / 2,
+            y_pos,
+            f"{attenuation}dB",
+            ha="center",
+            va="center",
+            fontsize=14,
+            fontweight="bold",
+            bbox=dict(facecolor="white", alpha=0.6, edgecolor="none"),
+        )
+
+    if "ylim" in kwargs:
+        ax.set_ylim(kwargs["ylim"])
+    ax.set_xlim(left=0)
+    ax.set_xticks(rounded_positions)
+    ax.set_xticklabels([f"{int(x)}" for x in rounded_positions], rotation=45)
+
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("Throughput (Mbps)")
+    ax.set_title("Mean and Median Throughput per Mode Segment")
+    ax.legend(
+    loc="upper right",
+    bbox_to_anchor=(0.5, 1.15),
+    ncol=3,  # Mean, Median, SD
+    frameon=False
+    )
